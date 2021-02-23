@@ -1,0 +1,11 @@
+[Unit]
+Description=Central Monitor client daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/centralmon
+Restart=always
+User=centralmon
+
+[Install]
+WantedBy=multi-user.target

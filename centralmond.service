@@ -1,0 +1,11 @@
+[Unit]
+Description=Central Monitor server daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/centralmond --cred=/etc/centralmond.cred
+Restart=always
+User=centralmon
+
+[Install]
+WantedBy=multi-user.target

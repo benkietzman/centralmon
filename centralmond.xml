@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<!DOCTYPE service_bundle SYSTEM "/usr/share/lib/xml/dtd/service_bundle.dtd.1">
+<service_bundle type='manifest' name='centralmond'>
+
+<service
+	name='application/centralmond'
+	type='service'
+	version='1'>
+
+	<single_instance />
+
+	<dependency
+		name='usr'
+		type='service'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/system/filesystem/local' />
+	</dependency>
+
+	<exec_method
+		type='method'
+		name='start'
+		exec='/usr/local/sbin/svc-centralmond.sh'
+		timeout_seconds='60'>
+		<method_context>
+			<method_credential user='root' group='root' />
+		</method_context>
+	</exec_method>
+
+	<exec_method
+		type='method'
+		name='stop'
+		exec=':kill'
+		timeout_seconds='60'>
+	</exec_method>
+
+	<instance name='default' enabled='false' />
+
+	<template>
+		<common_name>
+			<loctext xml:lang='C'>
+			Central Monitor - server
+			</loctext>
+		</common_name>
+	</template>
+</service>
+
+</service_bundle>
