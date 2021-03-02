@@ -20,18 +20,24 @@ bin/centralmon_trigger: ../common/libcommon.a obj/centralmon_trigger.o
 	-if [ ! -d bin ]; then mkdir bin; fi;
 	if test "$(MAKE_UNAME)" = "Linux"; then g++ -ggdb -o bin/centralmon_trigger obj/centralmon_trigger.o $(LDFLAGS) -L/data/extras/lib -L../common -lcommon -lb64 -lcrypto -lexpat -lmjson -lnsl -lpthread -lrt -lssl -ltar -lz; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -ggdb -o bin/centralmon_trigger obj/centralmon_trigger.o $(LDFLAGS) -L/data/extras/lib -L/usr/local/lib -L/usr/local/ssl/lib -L/opt/csw/lib -L../common -lcommon -lb64 -lcrypto -lexpat -lkstat -lmjson -lnsl -lpthread -lrt -lsocket -lssl -ltar -lz; fi;
 
-../common/libcommon.a:
-	cd ../common; ./configure; make;
+../common/libcommon.a: ../common/Makefile
+	cd ../common; make;
 
-obj/centralmon.o: centralmon.cpp
+../common/Makefile: ../common/configure
+	cd ../common; ./configure;
+
+../common/configure:
+	cd ../; git clone https://github.com/benkietzman/common.git
+
+obj/centralmon.o: centralmon.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
 	if test "$(MAKE_UNAME)" = "Linux"; then g++ -Wall -ggdb -c $< -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -Wall -ggdb -c $< -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
-obj/centralmond.o: centralmond.cpp
+obj/centralmond.o: centralmond.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
 	if test "$(MAKE_UNAME)" = "Linux"; then g++ -Wall -ggdb -c $< -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -Wall -ggdb -c $< -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
-obj/centralmon_trigger.o: centralmon_trigger.cpp
+obj/centralmon_trigger.o: centralmon_trigger.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
 	if test "$(MAKE_UNAME)" = "Linux"; then g++ -Wall -ggdb -c $< -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -Wall -ggdb -c $< -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
