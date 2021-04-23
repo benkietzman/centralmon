@@ -1048,10 +1048,6 @@ int main(int argc, char *argv[])
                         gOverallList.erase((*j)->strServer);
                         //notify((string)"Lost client connection to " + (*j)->strServer, strError);
                       }
-                      if (gpSyslog != NULL)
-                      {
-                        gpSyslog->connectionStopped("Closed request.", (*j)->fdData);
-                      }
                       close((*j)->fdData);
                       delete *j;
                       removeList.push_back(j);
