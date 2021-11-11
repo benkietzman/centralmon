@@ -866,7 +866,7 @@ int main(int argc, char *argv[])
                 bExit = true;
               }
             }
-            if (fds[0].revents & POLLIN)
+            if (fds[0].revents & POLLOUT)
             {
               if (!gpUtility->sslWrite(ssl, strBuffer[1], nReturn))
               {
