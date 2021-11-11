@@ -64,7 +64,7 @@ using namespace common;
 /*! \def mUSAGE(A)
 * \brief Prints the usage statement.
 */
-#define mUSAGE(A) cout << endl << "Usage:  "<< A << " [options]"  << endl << endl << " --central=CENTRAL" << endl << "     Provides the path to the central file." << endl << endl << " -c CREDENTIALS, --cred=CREDENTIALS" << endl << "     Provides the path to the credentials file." << endl << endl << " -d, --daemon" << endl << "     Turns the process into a daemon." << endl << endl << " -e EMAIL, --email=EMAIL" << endl << "     Provides the email address for default notifications." << endl << endl << " -h, --help" << endl << "     Displays this usage screen." << endl << endl << " -r ROOM, --room=ROOM" << endl << "     Provides the chat room." << endl << endl << "     --syslog" << endl << "     Enables syslog." << endl << endl << " -v, --version" << endl << "     Displays the current version of this software." << endl << endl
+#define mUSAGE(A) cout << endl << "Usage:  "<< A << " [options]"  << endl << endl << " --central=CENTRAL" << endl << "     Provides the path to the central file." << endl << endl << " --cert=CERTIFICATE" << endl << "     Provides the path to the certificate file." << endl << endl << " -c CREDENTIALS, --cred=CREDENTIALS" << endl << "     Provides the path to the credentials file." << endl << endl << " -d, --daemon" << endl << "     Turns the process into a daemon." << endl << endl << " -e EMAIL, --email=EMAIL" << endl << "     Provides the email address for default notifications." << endl << endl << " -h, --help" << endl << "     Displays this usage screen." << endl << endl << " --private-key=PRIVATE_KEY" << endl << "     Provides the path to the private key file." << endl << endl << " -r ROOM, --room=ROOM" << endl << "     Provides the chat room." << endl << endl << "     --syslog" << endl << "     Enables syslog." << endl << endl << " -v, --version" << endl << "     Displays the current version of this software." << endl << endl
 /*! \def mVER_USAGE(A,B)
 * \brief Prints the version number.
 */
@@ -84,6 +84,8 @@ struct connection
   string strServer;
   time_t CStartTime;
   time_t CEndTime;
+  SSL *ssl;
+  common_socket_type eSocketType;
 };
 struct message
 {
@@ -162,7 +164,6 @@ static list<message *> gMessageList; //!< Contains the message list.
 static map<string, string> gCred; //!< Contains the Bridge credentials.
 static map<string, overall *> gOverallList; //!< Contains the overall list.
 static string gstrApplication = "Central Monitor"; //!< Global application name.
-static string gstrCred; //!< Global credentials path.
 static string gstrEmail; //!< Global notification email address.
 static string gstrRoom; //!< Global chat room.
 static string gstrTimezonePrefix = "c"; //!< Contains the local timezone.
@@ -216,7 +217,8 @@ void sighandle(const int nSignal);
 int main(int argc, char *argv[])
 {
   bool bSetCredentials = false;
-  string strError;
+  string strCertificate, strCred, strError, strPrivateKey;
+  SSL_CTX *ctx = NULL;
 
   gpCentral = new Central(strError);
   gpJunction = new ServiceJunction(strError);
@@ -242,18 +244,24 @@ int main(int argc, char *argv[])
       gpCentral->utility()->setConfPath(strCentral, strError);
       gpJunction->utility()->setConfPath(strCentral, strError);
     }
+    else if (strArg.size() > 7 && strArg.substr(0, 7) == "--cert=")
+    {
+      strCertificate = strArg.substr(7, strArg.size() - 7);
+      gpCentral->manip()->purgeChar(strCertificate, strCertificate, "'");
+      gpCentral->manip()->purgeChar(strCertificate, strCertificate, "\"");
+    }
     else if (strArg == "-c" || (strArg.size() > 7 && strArg.substr(0, 7) == "--cred="))
     {
       if (strArg == "-c" && i + 1 < argc && argv[i+1][0] != '-')
       {
-        gstrCred = argv[++i];
+        strCred = argv[++i];
       }
       else
       {
-        gstrCred = strArg.substr(7, strArg.size() - 7);
+        strCred = strArg.substr(7, strArg.size() - 7);
       }
-      gpCentral->manip()->purgeChar(gstrCred, gstrCred, "'");
-      gpCentral->manip()->purgeChar(gstrCred, gstrCred, "\"");
+      gpCentral->manip()->purgeChar(strCred, strCred, "'");
+      gpCentral->manip()->purgeChar(strCred, strCred, "\"");
     }
     else if (strArg == "-d" || strArg == "--daemon")
     {
@@ -276,6 +284,12 @@ int main(int argc, char *argv[])
     {
       mUSAGE(argv[0]);
       return 0;
+    }
+    else if (strArg.size() > 14 && strArg.substr(0, 14) == "--private-key=")
+    {
+      strPrivateKey = strArg.substr(14, strArg.size() - 14);
+      gpCentral->manip()->purgeChar(strPrivateKey, strPrivateKey, "'");
+      gpCentral->manip()->purgeChar(strPrivateKey, strPrivateKey, "\"");
     }
     else if (strArg == "-r" || (strArg.size() > 7 && strArg.substr(0, 7) == "--room="))
     {
@@ -310,7 +324,6 @@ int main(int argc, char *argv[])
   gpCentral->setApplication(gstrApplication);
   gpCentral->setEmail(gstrEmail);
   gpJunction->setApplication(gstrApplication);
-  gpJunction->useSecureJunction(false);
   if (!gstrRoom.empty())
   {
     if (gstrRoom[0] != '#')
@@ -319,9 +332,9 @@ int main(int argc, char *argv[])
     }
     gpCentral->setRoom(gstrRoom);
   }
-  if (!gstrCred.empty())
+  if (!strCred.empty())
   {
-    ifstream inCred((gstrCred).c_str());
+    ifstream inCred((strCred).c_str());
     if (inCred.good()) 
     {
       string strLine;
@@ -348,11 +361,15 @@ int main(int argc, char *argv[])
     }
     inCred.close();
   }
+  gpCentral->utility()->sslInit();
+  if (!strCertificate.empty() && !strPrivateKey.empty() && (ctx = gpCentral->utility()->sslInitServer(strCertificate, strPrivateKey, strError)) == NULL)
+  {
+    cerr << "Central::utility()->sslInitServer() error:  " << strError << endl;
+  }
   // {{{ normal run
-  if (!gstrEmail.empty() && bSetCredentials)
+  if (!gstrEmail.empty() && bSetCredentials && ctx != NULL)
   {
     ifstream inFile;
-    stringstream ssCore;
     socklen_t clilen;
     sockaddr_in cli_addr;
     struct addrinfo hints;
@@ -426,7 +443,6 @@ int main(int argc, char *argv[])
         if (listen(gfdStatus, 50) == 0)
         {
           bool bExit = false;
-          char szBuffer[65536];
           list<connection *> bridge;
           pollfd *fds;
           size_t unIndex;
@@ -467,6 +483,8 @@ int main(int argc, char *argv[])
                   ptConnection->bClient = false;
                   ptConnection->bClose = false;
                   ptConnection->fdData = fdData;
+                  ptConnection->ssl = NULL;
+                  ptConnection->eSocketType = COMMON_SOCKET_UNKNOWN;
                   bridge.push_back(ptConnection);
                 }
                 else
@@ -490,10 +508,23 @@ int main(int argc, char *argv[])
                     }
                     if (fds[i].revents & POLLIN)
                     {
-                      if ((nReturn = read((*j)->fdData, szBuffer, 65536)) > 0)
+                      if ((*j)->eSocketType == COMMON_SOCKET_UNKNOWN)
+                      {
+                        if (gpCentral->utility()->socketType((*j)->fdData, (*j)->eSocketType, strError))
+                        {
+                          if ((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED && ((*j)->ssl = gpCentral->utility()->sslAccept(ctx, (*j)->fdData, strError)) == NULL)
+                          {
+                            (*j)->bClose = true;
+                          }
+                        }
+                        else
+                        {
+                          (*j)->bClose = true;
+                        }
+                      }
+                      if (!(*j)->bClose && (((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED && gpCentral->utility()->sslRead((*j)->ssl, (*j)->strBuffer[0], nReturn)) || ((*j)->eSocketType == COMMON_SOCKET_UNENCRYPTED && gpCentral->utility()->fdRead((*j)->fdData, (*j)->strBuffer[0], nReturn))))
                       {
                         size_t nPosition;
-                        (*j)->strBuffer[0].append(szBuffer, nReturn);
                         while ((nPosition = (*j)->strBuffer[0].find("\n", 0)) != string::npos)
                         {
                           string strAction, strLine = (*j)->strBuffer[0].substr(0, nPosition);
@@ -1019,9 +1050,8 @@ int main(int argc, char *argv[])
                     }
                     if (fds[i].revents & POLLOUT)
                     {
-                      if ((nReturn = write((*j)->fdData, (*j)->strBuffer[1].c_str(), (*j)->strBuffer[1].size())) > 0)
+                      if (!(*j)->bClose && (((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED && gpCentral->utility()->sslWrite((*j)->ssl, (*j)->strBuffer[1], nReturn)) || ((*j)->eSocketType == COMMON_SOCKET_UNENCRYPTED && gpCentral->utility()->fdWrite((*j)->fdData, (*j)->strBuffer[1], nReturn))))
                       {
-                        (*j)->strBuffer[1].erase(0, nReturn);
                         if (!(*j)->bClient && (*j)->strBuffer[1].empty())
                         {
                           (*j)->bClose = true;
@@ -1047,6 +1077,11 @@ int main(int argc, char *argv[])
                         ptOverall = NULL;
                         gOverallList.erase((*j)->strServer);
                         //notify((string)"Lost client connection to " + (*j)->strServer, strError);
+                      }
+                      if ((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED)
+                      {
+                        SSL_shutdown((*j)->ssl);
+                        SSL_free((*j)->ssl);
                       }
                       close((*j)->fdData);
                       delete *j;
@@ -1220,6 +1255,11 @@ int main(int argc, char *argv[])
     mUSAGE(argv[0]);
   }
   // }}}
+  if (ctx != NULL)
+  {
+    SSL_CTX_free(ctx);
+  }
+  gpCentral->utility()->sslDeinit();
   gCred.clear();
   if (gpSyslog != NULL)
   {

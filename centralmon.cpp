@@ -255,7 +255,9 @@ int main(int argc, char *argv[])
   // {{{ normal run
   if (!strCentral.empty() && !strServer.empty())
   {
+    bool bReady = true;
     ifstream inFile;
+    SSL_CTX *ctx = NULL;
     if (gbDaemon)
     {
       gpUtility->daemonize();
@@ -294,28 +296,33 @@ int main(int argc, char *argv[])
     }
     inFile.close();
     // }}}
-    while (true)
+    if ((ctx = gpUtility->sslInitClient(strError)) == NULL)
     {
-      int fdSocket;
-      if ((fdSocket = socket(AF_INET, SOCK_STREAM, 0)) >= 0)
+      bReady = false;
+      cerr << "Utility::sslInitClient() error:  " << strError << endl;
+    }
+    while (bReady)
+    {
+      bool bConnected = false;
+      struct addrinfo hints;
+      struct addrinfo *result;
+      int fdSocket, nReturn;
+      SSL *ssl = NULL;
+      memset(&hints, 0, sizeof(struct addrinfo));
+      hints.ai_family = AF_UNSPEC;
+      hints.ai_socktype = SOCK_STREAM;
+      hints.ai_flags = 0;
+      hints.ai_protocol = 0;
+      if ((nReturn = getaddrinfo(strCentral.c_str(), PORT, &hints, &result)) == 0)
       {
-        bool bConnected = false;
-        struct addrinfo hints;
-        struct addrinfo *result;
-        int nReturn;
-        memset(&hints, 0, sizeof(struct addrinfo));
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = 0;
-        hints.ai_protocol = 0;
-        if ((nReturn = getaddrinfo(strCentral.c_str(), PORT, &hints, &result)) == 0)
+        struct addrinfo *rp;
+        for (rp = result; !bConnected && rp != NULL; rp = rp->ai_next)
         {
-          struct addrinfo *rp;
-          for (rp = result; !bConnected && rp != NULL; rp = rp->ai_next)
+          if ((fdSocket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) >= 0)
           {
-            if ((fdSocket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol)) >= 0)
+            if (connect(fdSocket, rp->ai_addr, rp->ai_addrlen) == 0)
             {
-              if (connect(fdSocket, rp->ai_addr, rp->ai_addrlen) == 0)
+              if ((ssl = gpUtility->sslConnect(ctx, fdSocket, strError)) != NULL)
               {
                 bConnected = true;
               }
@@ -324,519 +331,565 @@ int main(int argc, char *argv[])
                 close(fdSocket);
               }
             }
-          }
-          freeaddrinfo(result);
-        }
-        if (bConnected)
-        {
-          if (write(fdSocket, ((string)"server " + strServer + (string)"\n").c_str(), strServer.size() + 8) >= 0)
-          {
-            string strLine;
-            while (gpUtility->getLine(fdSocket, strLine))
+            else
             {
-              string strAction;
-              stringstream ssLine;
-              ssLine.str(strLine);
-              ssLine >> strAction;
-              if (file.directoryExist("/proc"))
+              close(fdSocket);
+            }
+          }
+        }
+        freeaddrinfo(result);
+      }
+      if (bConnected)
+      {
+        bool bExit = false;
+        size_t unPosition;
+        string strBuffer[2];
+        strBuffer[1] = (string)"server " + strServer + "\n";
+        while (!bExit)
+        {
+          pollfd fds[1];
+          fds[0].fd = fdSocket;
+          fds[0].events = POLLIN;
+          if (!strBuffer[1].empty())
+          {
+            fds[0].events |= POLLOUT;
+          }
+          if ((nReturn = poll(fds, 1, 250)) > 0)
+          {
+            if (fds[0].revents & POLLIN)
+            {
+              if (gpUtility->sslRead(ssl, strBuffer[0], nReturn))
               {
-                FILE *pfinPipe = NULL;
-                struct utsname server;
-                // {{{ process
-                if (strAction == "process")
+                while ((unPosition = strBuffer[0].find("\n")) != string::npos)
                 {
-                  string strProcess;
-                  ssLine >> strProcess;
-                  if (!strProcess.empty())
+                  string strAction;
+                  stringstream ssLine;
+                  ssLine.str(strBuffer[0].substr(0, unPosition));
+                  strBuffer[0].erase(0, (unPosition + 1));
+                  ssLine >> strAction;
+                  if (file.directoryExist("/proc"))
                   {
-                    list<string> procList;
-                    stringstream ssDetails;
-                    process tProcess;
-                    // {{{ gather process data
-                    tProcess.nProcesses = 0;
-                    tProcess.ulImage = 0;
-                    tProcess.ulRealMinImage = 0;
-                    tProcess.ulRealMaxImage = 0;
-                    tProcess.ulResident = 0;
-                    tProcess.ulRealMinResident = 0;
-                    tProcess.ulRealMaxResident = 0;
-                    tProcess.CStartTime = 0;
-                    file.directoryList("/proc", procList);
-                    for (list<string>::iterator i = procList.begin(); i != procList.end(); i++)
+                    FILE *pfinPipe = NULL;
+                    struct utsname server;
+                    // {{{ process
+                    if (strAction == "process")
                     {
-                      if ((*i)[0] != '.' && file.directoryExist((string)"/proc/" + (*i)))
+                      string strProcess;
+                      ssLine >> strProcess;
+                      if (!strProcess.empty())
                       {
-                        // {{{ linux
-                        #ifdef LINUX
-                        struct stat tStat;
-                        struct passwd *ptPasswd = NULL;
-                        if (stat(((string)"/proc/" + (*i)).c_str(), &tStat) == 0 && file.fileExist((string)"/proc/" + (*i) + (string)"/stat") && (ptPasswd = getpwuid(tStat.st_uid)) != NULL)
+                        list<string> procList;
+                        stringstream ssDetails;
+                        process tProcess;
+                        // {{{ gather process data
+                        tProcess.nProcesses = 0;
+                        tProcess.ulImage = 0;
+                        tProcess.ulRealMinImage = 0;
+                        tProcess.ulRealMaxImage = 0;
+                        tProcess.ulResident = 0;
+                        tProcess.ulRealMinResident = 0;
+                        tProcess.ulRealMaxResident = 0;
+                        tProcess.CStartTime = 0;
+                        file.directoryList("/proc", procList);
+                        for (list<string>::iterator i = procList.begin(); i != procList.end(); i++)
                         {
-                          string strOwner = ptPasswd->pw_name;
-                          ifstream inStat(((string)"/proc/" + (*i) + (string)"/stat").c_str());
-                          if (inStat.good())
+                          if ((*i)[0] != '.' && file.directoryExist((string)"/proc/" + (*i)))
                           {
-                            string strTemp, strDaemon;
-                            long lPageSize = sysconf(_SC_PAGE_SIZE) / 1024;
-                            unsigned long ulImage = 0, ulResident = 0;
-                            inStat >> strTemp >> strDaemon;
-                            for (unsigned int i = 0; i < 20; i++)
+                            // {{{ linux
+                            #ifdef LINUX
+                            struct stat tStat;
+                            struct passwd *ptPasswd = NULL;
+                            if (stat(((string)"/proc/" + (*i)).c_str(), &tStat) == 0 && file.fileExist((string)"/proc/" + (*i) + (string)"/stat") && (ptPasswd = getpwuid(tStat.st_uid)) != NULL)
                             {
-                              inStat >> strTemp;
-                            }
-                            inStat >> ulImage >> ulResident;
-                            ulImage /= 1024;
-                            ulResident *= lPageSize;
-                            if (!strDaemon.empty() && strDaemon[0] == '(')
-                            {
-                              strDaemon.erase(0, 1);
-                            }
-                            if (!strDaemon.empty() && strDaemon[strDaemon.size() - 1] == ')')
-                            {
-                              strDaemon.erase(strDaemon.size() - 1, 1);
-                            }
-                            if (strProcess == strDaemon)
-                            {
-                              if (tProcess.owner.find(strOwner) == tProcess.owner.end())
+                              string strOwner = ptPasswd->pw_name;
+                              ifstream inStat(((string)"/proc/" + (*i) + (string)"/stat").c_str());
+                              if (inStat.good())
                               {
-                                tProcess.owner[strOwner] = 0;
-                              }
-                              tProcess.owner[strOwner]++;
-                              tProcess.nProcesses++;
-                              tProcess.ulImage += ulImage;
-                              if (tProcess.ulRealMinImage == 0 || ulImage < tProcess.ulRealMinImage)
-                              {
-                                tProcess.ulRealMinImage = ulImage;
-                              }
-                              if (tProcess.ulRealMaxImage == 0 || ulImage > tProcess.ulRealMaxImage)
-                              {
-                                tProcess.ulRealMaxImage = ulImage;
-                              }
-                              tProcess.ulResident += ulResident;
-                              if (tProcess.ulRealMinResident == 0 || ulResident < tProcess.ulRealMinResident)
-                              {
-                                tProcess.ulRealMinResident = ulResident;
-                              }
-                              if (tProcess.ulRealMaxResident == 0 || ulResident > tProcess.ulRealMaxResident)
-                              {
-                                tProcess.ulRealMaxResident = ulResident;
-                              }
-                              if ((pfinPipe = popen(((string)"ps --pid=" + (*i) + (string)" --format=lstart --no-headers").c_str(), "r")) != NULL)
-                              {
-                                char szTemp[4][10] = {"\0", "\0", "\0", "\0"};
-                                if (fscanf(pfinPipe, "%*s %s %s %s %s", szTemp[0], szTemp[1], szTemp[2], szTemp[3]) != EOF)
+                                string strTemp, strDaemon;
+                                long lPageSize = sysconf(_SC_PAGE_SIZE) / 1024;
+                                unsigned long ulImage = 0, ulResident = 0;
+                                inStat >> strTemp >> strDaemon;
+                                for (unsigned int i = 0; i < 20; i++)
                                 {
-                                  time_t CTime;
-                                  struct tm tTime;
-                                  tTime.tm_mon = (((string)szTemp[0] == "Jan")?0:((string)szTemp[0] == "Feb")?1:((string)szTemp[0] == "Mar")?2:((string)szTemp[0] == "Apr")?3:((string)szTemp[0] == "May")?4:((string)szTemp[0] == "Jun")?5:((string)szTemp[0] == "Jul")?6:((string)szTemp[0] == "Aug")?7:((string)szTemp[0] == "Sep")?8:((string)szTemp[0] == "Oct")?9:((string)szTemp[0] == "Nov")?10:((string)szTemp[0] == "Dec")?11:0);
-                                  tTime.tm_mday = atoi(szTemp[1]);
-                                  tTime.tm_year = atoi(szTemp[3]) - 1900;
-                                  tTime.tm_hour = atoi((((string)szTemp[2]).substr(0, 2)).c_str());
-                                  tTime.tm_min = atoi((((string)szTemp[2]).substr(3, 2)).c_str());
-                                  tTime.tm_sec = atoi((((string)szTemp[2]).substr(6, 2)).c_str());
-                                  tTime.tm_isdst = -1;
-                                  CTime = mktime(&tTime);
-                                  if (CTime > 0 && (tProcess.CStartTime == 0 || CTime < tProcess.CStartTime))
+                                  inStat >> strTemp;
+                                }
+                                inStat >> ulImage >> ulResident;
+                                ulImage /= 1024;
+                                ulResident *= lPageSize;
+                                if (!strDaemon.empty() && strDaemon[0] == '(')
+                                {
+                                  strDaemon.erase(0, 1);
+                                }
+                                if (!strDaemon.empty() && strDaemon[strDaemon.size() - 1] == ')')
+                                {
+                                  strDaemon.erase(strDaemon.size() - 1, 1);
+                                }
+                                if (strProcess == strDaemon)
+                                {
+                                  if (tProcess.owner.find(strOwner) == tProcess.owner.end())
                                   {
-                                    tProcess.CStartTime = CTime;
+                                    tProcess.owner[strOwner] = 0;
+                                  }
+                                  tProcess.owner[strOwner]++;
+                                  tProcess.nProcesses++;
+                                  tProcess.ulImage += ulImage;
+                                  if (tProcess.ulRealMinImage == 0 || ulImage < tProcess.ulRealMinImage)
+                                  {
+                                    tProcess.ulRealMinImage = ulImage;
+                                  }
+                                  if (tProcess.ulRealMaxImage == 0 || ulImage > tProcess.ulRealMaxImage)
+                                  {
+                                    tProcess.ulRealMaxImage = ulImage;
+                                  }
+                                  tProcess.ulResident += ulResident;
+                                  if (tProcess.ulRealMinResident == 0 || ulResident < tProcess.ulRealMinResident)
+                                  {
+                                    tProcess.ulRealMinResident = ulResident;
+                                  }
+                                  if (tProcess.ulRealMaxResident == 0 || ulResident > tProcess.ulRealMaxResident)
+                                  {
+                                    tProcess.ulRealMaxResident = ulResident;
+                                  }
+                                  if ((pfinPipe = popen(((string)"ps --pid=" + (*i) + (string)" --format=lstart --no-headers").c_str(), "r")) != NULL)
+                                  {
+                                    char szTemp[4][10] = {"\0", "\0", "\0", "\0"};
+                                    if (fscanf(pfinPipe, "%*s %s %s %s %s", szTemp[0], szTemp[1], szTemp[2], szTemp[3]) != EOF)
+                                    {
+                                      time_t CTime;
+                                      struct tm tTime;
+                                      tTime.tm_mon = (((string)szTemp[0] == "Jan")?0:((string)szTemp[0] == "Feb")?1:((string)szTemp[0] == "Mar")?2:((string)szTemp[0] == "Apr")?3:((string)szTemp[0] == "May")?4:((string)szTemp[0] == "Jun")?5:((string)szTemp[0] == "Jul")?6:((string)szTemp[0] == "Aug")?7:((string)szTemp[0] == "Sep")?8:((string)szTemp[0] == "Oct")?9:((string)szTemp[0] == "Nov")?10:((string)szTemp[0] == "Dec")?11:0);
+                                      tTime.tm_mday = atoi(szTemp[1]);
+                                      tTime.tm_year = atoi(szTemp[3]) - 1900;
+                                      tTime.tm_hour = atoi((((string)szTemp[2]).substr(0, 2)).c_str());
+                                      tTime.tm_min = atoi((((string)szTemp[2]).substr(3, 2)).c_str());
+                                      tTime.tm_sec = atoi((((string)szTemp[2]).substr(6, 2)).c_str());
+                                      tTime.tm_isdst = -1;
+                                      CTime = mktime(&tTime);
+                                      if (CTime > 0 && (tProcess.CStartTime == 0 || CTime < tProcess.CStartTime))
+                                      {
+                                        tProcess.CStartTime = CTime;
+                                      }
+                                    }
+                                  }
+                                  pclose(pfinPipe);
+                                }
+                              }
+                              inStat.close();
+                            }
+                            #endif
+                            // }}}
+                            // {{{ solaris
+                            #ifdef SOLARIS
+                            if (file.fileExist((string)"/proc/" + (*i) + (string)"/psinfo"))
+                            {
+                              ifstream inProc(((string)"/proc/" + (*i) + (string)"/psinfo").c_str(), ios::in|ios::binary);
+                              psinfo tPsInfo;
+                              if (inProc.good() && inProc.read((char *)&tPsInfo, sizeof(psinfo)).good())
+                              {
+                                if (strProcess == (string)tPsInfo.pr_fname)
+                                {
+                                  string strOwner = getpwuid(tPsInfo.pr_uid)->pw_name;
+                                  if (tProcess.owner.find(strOwner) == tProcess.owner.end())
+                                  {
+                                    tProcess.owner[strOwner] = 0;
+                                  }
+                                  tProcess.owner[strOwner]++;
+                                  tProcess.nProcesses++;
+                                  tProcess.ulImage += tPsInfo.pr_size;
+                                  if (tProcess.ulRealMinImage == 0 || tPsInfo.pr_size < tProcess.ulRealMinImage)
+                                  {
+                                    tProcess.ulRealMinImage = tPsInfo.pr_size;
+                                  }
+                                  if (tProcess.ulRealMaxImage == 0 || tPsInfo.pr_size > tProcess.ulRealMaxImage)
+                                  {
+                                    tProcess.ulRealMaxImage = tPsInfo.pr_size;
+                                  }
+                                  tProcess.ulResident += tPsInfo.pr_rssize;
+                                  if (tProcess.ulRealMinResident == 0 || tPsInfo.pr_rssize < tProcess.ulRealMinResident)
+                                  {
+                                    tProcess.ulRealMinResident = tPsInfo.pr_rssize;
+                                  }
+                                  if (tProcess.ulRealMaxResident == 0 || tPsInfo.pr_rssize > tProcess.ulRealMaxResident)
+                                  {
+                                    tProcess.ulRealMaxResident = tPsInfo.pr_rssize;
+                                  }
+                                  if (tProcess.CStartTime == 0 || tPsInfo.pr_start.tv_sec < tProcess.CStartTime)
+                                  {
+                                    tProcess.CStartTime = tPsInfo.pr_start.tv_sec;
                                   }
                                 }
                               }
-                              pclose(pfinPipe);
+                              inProc.close();
                             }
+                            #endif
+                            // }}}
                           }
-                          inStat.close();
+                        }
+                        // }}}
+                        procList.clear();
+                        ssDetails << "process;";
+                        ssDetails << strProcess << ';';
+                        if (tProcess.CStartTime > 0)
+                        {
+                          struct tm *ptTime = localtime(&(tProcess.CStartTime));
+                          ssDetails << setw(4) << setfill('0') << (ptTime->tm_year + 1900) << '-';
+                          ssDetails << setw(2) << setfill('0') << (ptTime->tm_mon + 1) << '-';
+                          ssDetails << setw(2) << setfill('0') << ptTime->tm_mday << ' ';
+                          ssDetails << setw(2) << setfill('0') << ptTime->tm_hour << ':';
+                          ssDetails << setw(2) << setfill('0') << ptTime->tm_min << ' ';
+                          ssDetails << gstrTimezonePrefix << ((ptTime->tm_isdst)?'d':'s') << "t;";
+                        }
+                        else
+                        {
+                          ssDetails << ";";
+                        }
+                        for (map<string, unsigned int>::iterator i = tProcess.owner.begin(); i != tProcess.owner.end(); i++)
+                        {
+                          if (i != tProcess.owner.begin())
+                          {
+                            ssDetails << ',';
+                          }
+                          ssDetails << i->first << '=' << i->second;
+                        }
+                        ssDetails << ';';
+                        ssDetails << tProcess.nProcesses << ';';
+                        ssDetails << tProcess.ulImage << ';';
+                        ssDetails << tProcess.ulRealMinImage << ';';
+                        ssDetails << tProcess.ulRealMaxImage << ';';
+                        ssDetails << tProcess.ulResident << ';';
+                        ssDetails << tProcess.ulRealMinResident << ';';
+                        ssDetails << tProcess.ulRealMaxResident;
+                        strBuffer[1].append(ssDetails.str() + "\n");
+                      }
+                      else
+                      {
+                        strBuffer[1].append("process;;;;0;0;0;0;0;0;0\n");
+                      }
+                    }
+                    // }}}
+                    // {{{ script
+                    else if (strAction == "script")
+                    {
+                      char *args[100], *pszArgument;
+                      int readpipe[2] = {-1, -1}, writepipe[2] = {-1, -1};
+                      pid_t childPid;
+                      string strArgument, strCommand, strJson;
+                      stringstream ssCommand;
+                      unsigned int unIndex = 0;
+                      gpUtility->getLine(ssLine, strCommand);
+                      manip.trim(strCommand, strCommand);
+                      ssCommand.str(strCommand);
+                      while (ssCommand >> strArgument)
+                      {
+                        pszArgument = new char[strArgument.size() + 1];
+                        strcpy(pszArgument, strArgument.c_str());
+                        args[unIndex++] = pszArgument;
+                      }
+                      gpUtility->getLine(fdSocket, strJson);
+                      manip.trim(strJson, strJson);
+                      args[unIndex] = NULL;
+                      if (pipe(readpipe) == 0)
+                      {
+                        if (pipe(writepipe) == 0)
+                        {
+                          if ((childPid = fork()) == 0)
+                          {
+                            int nReturn;
+                            string strValue;
+                            close(PARENT_WRITE);
+                            close(PARENT_READ);
+                            dup2(CHILD_READ, 0);
+                            close(CHILD_READ);
+                            dup2(CHILD_WRITE, 1);
+                            close(CHILD_WRITE);
+                            nReturn = execve(args[0], args, environ);
+                            log((string)"Failed to execute " + strCommand + (string)" " + strJson + (string)" using execl() [" + manip.toString(nReturn, strValue) + (string)"]:  " + getErrorMessage(nReturn));
+                            _exit(1);
+                          }
+                          else if (childPid > 0)
+                          {
+                            string strLine;
+                            close(CHILD_READ);
+                            close(CHILD_WRITE);
+                            write(PARENT_WRITE, (strJson + (string)"\n").c_str(), strJson.size() + 1);
+                            close(PARENT_READ);
+                            close(PARENT_WRITE);
+                          }
+                          else
+                          {
+                            log((string)"Failed to fork process to system call.  " + (string)strerror(errno));
+                          }
+                        }
+                        else
+                        {
+                          log((string)"Failed to establish write pipe to system call.  " + (string)strerror(errno));
+                        }
+                      }
+                      else
+                      {
+                        log((string)"Failed to establish read pipe to system call.  " + (string)strerror(errno));
+                      }
+                      for (unsigned int i = 0; i < unIndex; i++)
+                      {
+                        delete args[i];
+                      }
+                    }
+                    // }}}
+                    // {{{ system
+                    else if (strAction == "system")
+                    {
+                      map<string, bool> exclude;
+                      stringstream ssDetails;
+                      overall tOverall;
+                      // {{{ gather system data
+                      if (uname(&server) != -1)
+                      {
+                        // {{{ linux
+                        #ifdef LINUX
+                        struct sysinfo sys;
+                        if (sysinfo(&sys) != -1)
+                        {
+                          ifstream inCpuSpeed("/proc/cpuinfo");
+                          if (inCpuSpeed.good())
+                          {
+                            if ((pfinPipe = popen("top -b -n 1 | sed -n '8,$p'| awk '{print $9, $12}'", "r")) != NULL)
+                            {
+                              float fCpuSpeed = 0;
+                              string strTemp;
+                              while (fCpuSpeed == 0 && file.findLine(inCpuSpeed, false, false, "cpu MHz"))
+                              {
+                                inCpuSpeed >> strTemp >> strTemp >> strTemp >> fCpuSpeed;
+                              }
+                              tOverall.strOperatingSystem = server.sysname;
+                              tOverall.strSystemRelease = server.release;
+                              tOverall.nProcessors = get_nprocs();
+                              tOverall.unCpuSpeed = ((tOverall.nProcessors > 0)?(unsigned int)fCpuSpeed:0);
+                              tOverall.usProcesses = sys.procs;
+                              char szProcess[32] = "\0";
+                              float fCpu = 0, fCpuUsage = 0;
+                              map<float, list<string> > load;
+                              while (fscanf(pfinPipe, "%f %s%*[^\n]", &fCpu, &szProcess[0]) != EOF)
+                              {
+                                fCpuUsage += fCpu;
+                                if (load.find(fCpu) == load.end())
+                                {
+                                  list<string> item;
+                                  load[fCpu] = item;
+                                }
+                                if (load.find(fCpu) != load.end())
+                                {
+                                  load[fCpu].push_back(szProcess);
+                                }
+                              }
+                              tOverall.unCpuUsage = (unsigned int)(fCpuUsage / ((tOverall.nProcessors > 0)?tOverall.nProcessors:1));
+                              while (load.size() > 5)
+                              {
+                                load.begin()->second.clear();
+                                load.erase(load.begin()->first);
+                              }
+                              for (map<float, list<string> >::iterator i = load.begin(); i != load.end(); i++)
+                              {
+                                for (list<string>::iterator j = i->second.begin(); j != i->second.end(); j++)
+                                {
+                                  stringstream ssCpuProcessUsage;
+                                  ssCpuProcessUsage << (*j) << '=' << i->first;
+                                  if (!tOverall.strCpuProcessUsage.empty())
+                                  {
+                                    ssCpuProcessUsage << ',';
+                                  }
+                                  tOverall.strCpuProcessUsage = ssCpuProcessUsage.str() + tOverall.strCpuProcessUsage;
+                                }
+                                i->second.clear();
+                              }
+                              load.clear();
+                              tOverall.lUpTime = sys.uptime / 86400;
+                              tOverall.ulMainTotal = (sys.totalram * sys.mem_unit) / 1048576;
+                              tOverall.ulMainUsed = ((sys.totalram - sys.freeram) * sys.mem_unit) / 1048576;
+                              tOverall.ulSwapTotal = (sys.totalswap * sys.mem_unit) / 1048576;
+                              tOverall.ulSwapUsed = ((sys.totalswap - sys.freeswap) * sys.mem_unit) / 1048576;
+                            }
+                            fclose(pfinPipe);
+                          }
+                          inCpuSpeed.close();
                         }
                         #endif
                         // }}}
                         // {{{ solaris
                         #ifdef SOLARIS
-                        if (file.fileExist((string)"/proc/" + (*i) + (string)"/psinfo"))
+                        tOverall.strOperatingSystem = server.sysname;
+                        tOverall.strSystemRelease = server.release;
+                        tOverall.nProcessors = (int)sysconf(_SC_NPROCESSORS_CONF);
+                        kstat_ctl_t *kc;
+                        kstat_t *sys_pagesp;
+                        size_t lIdle, lKernel, lUser;
+                        kstat_named_t *kn;
+                        kc = kstat_open();
+                        if (kc != NULL && (sys_pagesp = kstat_lookup(kc, "cpu_info", 0, "cpu_info0")) != NULL)
                         {
-                          ifstream inProc(((string)"/proc/" + (*i) + (string)"/psinfo").c_str(), ios::in|ios::binary);
+                          kstat_read(kc, sys_pagesp, 0);
+                          kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "clock_MHz");
+                          tOverall.unCpuSpeed = (unsigned int)kn->value.ul;
+                        }
+                        list<string> dirList;
+                        file.directoryList("/proc/", dirList);
+                        unsigned short usProcesses = ((dirList.size() >= 2)?dirList.size() - 2:0);
+                        dirList.clear();
+                        tOverall.usProcesses = usProcesses;
+                        if (kc != NULL && (sys_pagesp = kstat_lookup(kc, "cpu", 0, "sys")) != NULL)
+                        {
+                          kstat_read(kc, sys_pagesp, 0);
+                          kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_idle");
+                          lIdle = kn->value.ul;
+                          kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_kernel");
+                          lKernel = kn->value.ul;
+                          kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_user");
+                          lUser = kn->value.ul;
+                          tOverall.unCpuUsage = (unsigned int)((lKernel + lUser) * 100 / (lIdle + lKernel + lUser));
+                        }
+                        kstat_close(kc);
+                        if (file.fileExist("/proc/0/psinfo"))
+                        {
+                          ifstream inProc("/proc/0/psinfo", ios::in|ios::binary);
                           psinfo tPsInfo;
                           if (inProc.good() && inProc.read((char *)&tPsInfo, sizeof(psinfo)).good())
                           {
-                            if (strProcess == (string)tPsInfo.pr_fname)
-                            {
-                              string strOwner = getpwuid(tPsInfo.pr_uid)->pw_name;
-                              if (tProcess.owner.find(strOwner) == tProcess.owner.end())
-                              {
-                                tProcess.owner[strOwner] = 0;
-                              }
-                              tProcess.owner[strOwner]++;
-                              tProcess.nProcesses++;
-                              tProcess.ulImage += tPsInfo.pr_size;
-                              if (tProcess.ulRealMinImage == 0 || tPsInfo.pr_size < tProcess.ulRealMinImage)
-                              {
-                                tProcess.ulRealMinImage = tPsInfo.pr_size;
-                              }
-                              if (tProcess.ulRealMaxImage == 0 || tPsInfo.pr_size > tProcess.ulRealMaxImage)
-                              {
-                                tProcess.ulRealMaxImage = tPsInfo.pr_size;
-                              }
-                              tProcess.ulResident += tPsInfo.pr_rssize;
-                              if (tProcess.ulRealMinResident == 0 || tPsInfo.pr_rssize < tProcess.ulRealMinResident)
-                              {
-                                tProcess.ulRealMinResident = tPsInfo.pr_rssize;
-                              }
-                              if (tProcess.ulRealMaxResident == 0 || tPsInfo.pr_rssize > tProcess.ulRealMaxResident)
-                              {
-                                tProcess.ulRealMaxResident = tPsInfo.pr_rssize;
-                              }
-                              if (tProcess.CStartTime == 0 || tPsInfo.pr_start.tv_sec < tProcess.CStartTime)
-                              {
-                                tProcess.CStartTime = tPsInfo.pr_start.tv_sec;
-                              }
-                            }
+                            time_t CTime;
+                            tOverall.lUpTime = (unsigned long)((time(&CTime) - tPsInfo.pr_start.tv_sec) / 60 /60 / 24);
                           }
                           inProc.close();
+                        }
+                        long lPageSize = sysconf(_SC_PAGESIZE);
+                        tOverall.ulMainTotal = (unsigned long)((float)lPageSize / 1024 / 1024 * sysconf(_SC_PHYS_PAGES));
+                        tOverall.ulMainUsed = (unsigned long)(tOverall.ulMainTotal - ((float)lPageSize / 1024 / 1024 * sysconf(_SC_AVPHYS_PAGES)));
+                        int nNum, nSwapCount;
+                        char szDummyBuffer[MAX_SWAP_ENTRIES][80];
+                        swapdata tSwapt;
+                        tSwapt.tblcount = MAX_SWAP_ENTRIES;
+                        for (unsigned int i = 0; i < MAX_SWAP_ENTRIES; i++)
+                        {
+                          tSwapt.swapdat[i].ste_path = szDummyBuffer[i]; 
+                        }
+                        nNum = swapctl(SC_GETNSWP, 0);
+                        nSwapCount = swapctl(SC_LIST, (void *)&tSwapt);
+                        if (nSwapCount != -1 && nNum != -1)
+                        {
+                          unsigned long ulPageTotal = 0, ulPageFree = 0;
+                          for (int i = 0; i < nSwapCount; i++)
+                          {
+                            ulPageTotal += tSwapt.swapdat[i].ste_pages;
+                            ulPageFree += tSwapt.swapdat[i].ste_free;
+                          }
+                          tOverall.ulSwapTotal = (unsigned long)((float)lPageSize / 1024 / 1024 * ulPageTotal);
+                          tOverall.ulSwapUsed = (unsigned long)(tOverall.ulSwapTotal - ((float)lPageSize / 1024 / 1024 * ulPageFree));
                         }
                         #endif
                         // }}}
                       }
-                    }
-                    // }}}
-                    procList.clear();
-                    ssDetails << "process;";
-                    ssDetails << strProcess << ';';
-                    if (tProcess.CStartTime > 0)
-                    {
-                      struct tm *ptTime = localtime(&(tProcess.CStartTime));
-                      ssDetails << setw(4) << setfill('0') << (ptTime->tm_year + 1900) << '-';
-                      ssDetails << setw(2) << setfill('0') << (ptTime->tm_mon + 1) << '-';
-                      ssDetails << setw(2) << setfill('0') << ptTime->tm_mday << ' ';
-                      ssDetails << setw(2) << setfill('0') << ptTime->tm_hour << ':';
-                      ssDetails << setw(2) << setfill('0') << ptTime->tm_min << ' ';
-                      ssDetails << gstrTimezonePrefix << ((ptTime->tm_isdst)?'d':'s') << "t;";
-                    }
-                    else
-                    {
-                      ssDetails << ";";
-                    }
-                    for (map<string, unsigned int>::iterator i = tProcess.owner.begin(); i != tProcess.owner.end(); i++)
-                    {
-                      if (i != tProcess.owner.begin())
+                      // }}}
+                      ssDetails << "system;";
+                      ssDetails << tOverall.strOperatingSystem << ';';
+                      ssDetails << tOverall.strSystemRelease << ';';
+                      ssDetails << tOverall.nProcessors << ';';
+                      ssDetails << tOverall.unCpuSpeed << ';';
+                      ssDetails << tOverall.usProcesses << ';';
+                      ssDetails << tOverall.unCpuUsage;
+                      if (!tOverall.strCpuProcessUsage.empty())
                       {
-                        ssDetails << ',';
+                        ssDetails << "|" << tOverall.strCpuProcessUsage;
                       }
-                      ssDetails << i->first << '=' << i->second;
-                    }
-                    ssDetails << ';';
-                    ssDetails << tProcess.nProcesses << ';';
-                    ssDetails << tProcess.ulImage << ';';
-                    ssDetails << tProcess.ulRealMinImage << ';';
-                    ssDetails << tProcess.ulRealMaxImage << ';';
-                    ssDetails << tProcess.ulResident << ';';
-                    ssDetails << tProcess.ulRealMinResident << ';';
-                    ssDetails << tProcess.ulRealMaxResident;
-                    write(fdSocket, (ssDetails.str() + (string)"\n").c_str(), ssDetails.str().size() + 1);
-                  }
-                  else
-                  {
-                    write(fdSocket, ((string)"process;;;;0;0;0;0;0;0;0\n").c_str(), 25);
-                  }
-                }
-                // }}}
-                // {{{ script
-                else if (strAction == "script")
-                {
-                  char *args[100], *pszArgument;
-                  int readpipe[2] = {-1, -1}, writepipe[2] = {-1, -1};
-                  pid_t childPid;
-                  string strArgument, strCommand, strJson;
-                  stringstream ssCommand;
-                  unsigned int unIndex = 0;
-                  gpUtility->getLine(ssLine, strCommand);
-                  manip.trim(strCommand, strCommand);
-                  ssCommand.str(strCommand);
-                  while (ssCommand >> strArgument)
-                  {
-                    pszArgument = new char[strArgument.size() + 1];
-                    strcpy(pszArgument, strArgument.c_str());
-                    args[unIndex++] = pszArgument;
-                  }
-                  gpUtility->getLine(fdSocket, strJson);
-                  manip.trim(strJson, strJson);
-                  args[unIndex] = NULL;
-                  if (pipe(readpipe) == 0)
-                  {
-                    if (pipe(writepipe) == 0)
-                    {
-                      if ((childPid = fork()) == 0)
+                      ssDetails << ';';
+                      ssDetails << tOverall.lUpTime << ';';
+                      ssDetails << tOverall.ulMainUsed << ';';
+                      ssDetails << tOverall.ulMainTotal << ';';
+                      ssDetails << tOverall.ulSwapUsed << ';';
+                      ssDetails << tOverall.ulSwapTotal << ';';
+                      #ifdef SOLARIS
+                      if ((pfinPipe = popen("/usr/sbin/df -ln", "r")) != NULL)
                       {
-                        int nReturn;
-                        string strValue;
-                        close(PARENT_WRITE);
-                        close(PARENT_READ);
-                        dup2(CHILD_READ, 0);
-                        close(CHILD_READ);
-                        dup2(CHILD_WRITE, 1);
-                        close(CHILD_WRITE);
-                        nReturn = execve(args[0], args, environ);
-                        log((string)"Failed to execute " + strCommand + (string)" " + strJson + (string)" using execl() [" + manip.toString(nReturn, strValue) + (string)"]:  " + getErrorMessage(nReturn));
-                        _exit(1);
+                        char szBuffer[1024] = "\0";
+                        while (fgets(szBuffer, 1023, pfinPipe) != NULL)
+                        {
+                          string strName, strType;
+                          stringstream ssBuffer(szBuffer);
+                          getline(ssBuffer, strName, ':');
+                          manip.trim(strName, strName);
+                          getline(ssBuffer, strType, ':');
+                          manip.trim(strType, strType);
+                          if (strType == "lofs")
+                          {
+                            exclude[strName] = true;
+                          }
+                        }
+                        pclose(pfinPipe);
                       }
-                      else if (childPid > 0)
+                      #endif
+                      if ((pfinPipe = popen("df -kl", "r")) != NULL)
                       {
-                        string strLine;
-                        close(CHILD_READ);
-                        close(CHILD_WRITE);
-                        write(PARENT_WRITE, (strJson + (string)"\n").c_str(), strJson.size() + 1);
-                        close(PARENT_READ);
-                        close(PARENT_WRITE);
+                        bool bFirst = true;
+                        char szField[3][128] = {"\0", "\0", "\0"};
+                        fscanf(pfinPipe, "%*s %s %*s %*s %s %s %*s", szField[0], szField[1], szField[2]);
+                        while (fscanf(pfinPipe, "%*s %s %*s %*s %s %s", szField[0], szField[1], szField[2]) != EOF)
+                        {
+                          if (atoi(szField[0]) > 0 && exclude.find(szField[2]) == exclude.end())
+                          {
+                            string strUsage = szField[1];
+                            strUsage.erase(strUsage.size() - 1, 1);
+                            if (bFirst)
+                            {
+                              bFirst = false;
+                            }
+                            else
+                            {
+                              ssDetails << ',';
+                            }
+                            ssDetails << szField[2] << '=' << strUsage;
+                          }
+                        }
+                      }
+                      if (pfinPipe)
+                      {
+                        pclose(pfinPipe);
                       }
                       else
                       {
-                        log((string)"Failed to fork process to system call.  " + (string)strerror(errno));
+                        cout<<"Error("<<errno<<"): "<<strerror(errno)<<endl;
                       }
+                      exclude.clear();
+                      strBuffer[1].append(ssDetails.str() + "\n");
                     }
-                    else
-                    {
-                      log((string)"Failed to establish write pipe to system call.  " + (string)strerror(errno));
-                    }
-                  }
-                  else
-                  {
-                    log((string)"Failed to establish read pipe to system call.  " + (string)strerror(errno));
-                  }
-                  for (unsigned int i = 0; i < unIndex; i++)
-                  {
-                    delete args[i];
-                  }
-                }
-                // }}}
-                // {{{ system
-                else if (strAction == "system")
-                {
-                  map<string, bool> exclude;
-                  stringstream ssDetails;
-                  overall tOverall;
-                  // {{{ gather system data
-                  if (uname(&server) != -1)
-                  {
-                    // {{{ linux
-                    #ifdef LINUX
-                    struct sysinfo sys;
-                    if (sysinfo(&sys) != -1)
-                    {
-                      ifstream inCpuSpeed("/proc/cpuinfo");
-                      if (inCpuSpeed.good())
-                      {
-                        if ((pfinPipe = popen("top -b -n 1 | sed -n '8,$p'| awk '{print $9, $12}'", "r")) != NULL)
-                        {
-                          float fCpuSpeed = 0;
-                          string strTemp;
-                          while (fCpuSpeed == 0 && file.findLine(inCpuSpeed, false, false, "cpu MHz"))
-                          {
-                            inCpuSpeed >> strTemp >> strTemp >> strTemp >> fCpuSpeed;
-                          }
-                          tOverall.strOperatingSystem = server.sysname;
-                          tOverall.strSystemRelease = server.release;
-                          tOverall.nProcessors = get_nprocs();
-                          tOverall.unCpuSpeed = ((tOverall.nProcessors > 0)?(unsigned int)fCpuSpeed:0);
-                          tOverall.usProcesses = sys.procs;
-                          char szProcess[32] = "\0";
-                          float fCpu = 0, fCpuUsage = 0;
-                          map<float, list<string> > load;
-                          while (fscanf(pfinPipe, "%f %s%*[^\n]", &fCpu, &szProcess[0]) != EOF)
-                          {
-                            fCpuUsage += fCpu;
-                            if (load.find(fCpu) == load.end())
-                            {
-                              list<string> item;
-                              load[fCpu] = item;
-                            }
-                            if (load.find(fCpu) != load.end())
-                            {
-                              load[fCpu].push_back(szProcess);
-                            }
-                          }
-                          tOverall.unCpuUsage = (unsigned int)(fCpuUsage / ((tOverall.nProcessors > 0)?tOverall.nProcessors:1));
-                          while (load.size() > 5)
-                          {
-                            load.begin()->second.clear();
-                            load.erase(load.begin()->first);
-                          }
-                          for (map<float, list<string> >::iterator i = load.begin(); i != load.end(); i++)
-                          {
-                            for (list<string>::iterator j = i->second.begin(); j != i->second.end(); j++)
-                            {
-                              stringstream ssCpuProcessUsage;
-                              ssCpuProcessUsage << (*j) << '=' << i->first;
-                              if (!tOverall.strCpuProcessUsage.empty())
-                              {
-                                ssCpuProcessUsage << ',';
-                              }
-                              tOverall.strCpuProcessUsage = ssCpuProcessUsage.str() + tOverall.strCpuProcessUsage;
-                            }
-                            i->second.clear();
-                          }
-                          load.clear();
-                          tOverall.lUpTime = sys.uptime / 86400;
-                          tOverall.ulMainTotal = (sys.totalram * sys.mem_unit) / 1048576;
-                          tOverall.ulMainUsed = ((sys.totalram - sys.freeram) * sys.mem_unit) / 1048576;
-                          tOverall.ulSwapTotal = (sys.totalswap * sys.mem_unit) / 1048576;
-                          tOverall.ulSwapUsed = ((sys.totalswap - sys.freeswap) * sys.mem_unit) / 1048576;
-                        }
-                        fclose(pfinPipe);
-                      }
-                      inCpuSpeed.close();
-                    }
-                    #endif
-                    // }}}
-                    // {{{ solaris
-                    #ifdef SOLARIS
-                    tOverall.strOperatingSystem = server.sysname;
-                    tOverall.strSystemRelease = server.release;
-                    tOverall.nProcessors = (int)sysconf(_SC_NPROCESSORS_CONF);
-                    kstat_ctl_t *kc;
-                    kstat_t *sys_pagesp;
-                    size_t lIdle, lKernel, lUser;
-                    kstat_named_t *kn;
-                    kc = kstat_open();
-                    if (kc != NULL && (sys_pagesp = kstat_lookup(kc, "cpu_info", 0, "cpu_info0")) != NULL)
-                    {
-                      kstat_read(kc, sys_pagesp, 0);
-                      kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "clock_MHz");
-                      tOverall.unCpuSpeed = (unsigned int)kn->value.ul;
-                    }
-                    list<string> dirList;
-                    file.directoryList("/proc/", dirList);
-                    unsigned short usProcesses = ((dirList.size() >= 2)?dirList.size() - 2:0);
-                    dirList.clear();
-                    tOverall.usProcesses = usProcesses;
-                    if (kc != NULL && (sys_pagesp = kstat_lookup(kc, "cpu", 0, "sys")) != NULL)
-                    {
-                      kstat_read(kc, sys_pagesp, 0);
-                      kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_idle");
-                      lIdle = kn->value.ul;
-                      kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_kernel");
-                      lKernel = kn->value.ul;
-                      kn = (kstat_named_t *)kstat_data_lookup(sys_pagesp, "cpu_nsec_user");
-                      lUser = kn->value.ul;
-                      tOverall.unCpuUsage = (unsigned int)((lKernel + lUser) * 100 / (lIdle + lKernel + lUser));
-                    }
-                    kstat_close(kc);
-                    if (file.fileExist("/proc/0/psinfo"))
-                    {
-                      ifstream inProc("/proc/0/psinfo", ios::in|ios::binary);
-                      psinfo tPsInfo;
-                      if (inProc.good() && inProc.read((char *)&tPsInfo, sizeof(psinfo)).good())
-                      {
-                        time_t CTime;
-                        tOverall.lUpTime = (unsigned long)((time(&CTime) - tPsInfo.pr_start.tv_sec) / 60 /60 / 24);
-                      }
-                      inProc.close();
-                    }
-                    long lPageSize = sysconf(_SC_PAGESIZE);
-                    tOverall.ulMainTotal = (unsigned long)((float)lPageSize / 1024 / 1024 * sysconf(_SC_PHYS_PAGES));
-                    tOverall.ulMainUsed = (unsigned long)(tOverall.ulMainTotal - ((float)lPageSize / 1024 / 1024 * sysconf(_SC_AVPHYS_PAGES)));
-                    int nNum, nSwapCount;
-                    char szDummyBuffer[MAX_SWAP_ENTRIES][80];
-                    swapdata tSwapt;
-                    tSwapt.tblcount = MAX_SWAP_ENTRIES;
-                    for (unsigned int i = 0; i < MAX_SWAP_ENTRIES; i++)
-                    {
-                      tSwapt.swapdat[i].ste_path = szDummyBuffer[i]; 
-                    }
-                    nNum = swapctl(SC_GETNSWP, 0);
-                    nSwapCount = swapctl(SC_LIST, (void *)&tSwapt);
-                    if (nSwapCount != -1 && nNum != -1)
-                    {
-                      unsigned long ulPageTotal = 0, ulPageFree = 0;
-                      for (int i = 0; i < nSwapCount; i++)
-                      {
-                        ulPageTotal += tSwapt.swapdat[i].ste_pages;
-                        ulPageFree += tSwapt.swapdat[i].ste_free;
-                      }
-                      tOverall.ulSwapTotal = (unsigned long)((float)lPageSize / 1024 / 1024 * ulPageTotal);
-                      tOverall.ulSwapUsed = (unsigned long)(tOverall.ulSwapTotal - ((float)lPageSize / 1024 / 1024 * ulPageFree));
-                    }
-                    #endif
                     // }}}
                   }
-                  // }}}
-                  ssDetails << "system;";
-                  ssDetails << tOverall.strOperatingSystem << ';';
-                  ssDetails << tOverall.strSystemRelease << ';';
-                  ssDetails << tOverall.nProcessors << ';';
-                  ssDetails << tOverall.unCpuSpeed << ';';
-                  ssDetails << tOverall.usProcesses << ';';
-                  ssDetails << tOverall.unCpuUsage;
-                  if (!tOverall.strCpuProcessUsage.empty())
-                  {
-                    ssDetails << "|" << tOverall.strCpuProcessUsage;
-                  }
-                  ssDetails << ';';
-                  ssDetails << tOverall.lUpTime << ';';
-                  ssDetails << tOverall.ulMainUsed << ';';
-                  ssDetails << tOverall.ulMainTotal << ';';
-                  ssDetails << tOverall.ulSwapUsed << ';';
-                  ssDetails << tOverall.ulSwapTotal << ';';
-                  #ifdef SOLARIS
-                  if ((pfinPipe = popen("/usr/sbin/df -ln", "r")) != NULL)
-                  {
-                    char szBuffer[1024] = "\0";
-                    while (fgets(szBuffer, 1023, pfinPipe) != NULL)
-                    {
-                      string strName, strType;
-                      stringstream ssBuffer(szBuffer);
-                      getline(ssBuffer, strName, ':');
-                      manip.trim(strName, strName);
-                      getline(ssBuffer, strType, ':');
-                      manip.trim(strType, strType);
-                      if (strType == "lofs")
-                      {
-                        exclude[strName] = true;
-                      }
-                    }
-                    pclose(pfinPipe);
-                  }
-                  #endif
-                  if ((pfinPipe = popen("df -kl", "r")) != NULL)
-                  {
-                    bool bFirst = true;
-                    char szField[3][128] = {"\0", "\0", "\0"};
-                    fscanf(pfinPipe, "%*s %s %*s %*s %s %s %*s", szField[0], szField[1], szField[2]);
-                    while (fscanf(pfinPipe, "%*s %s %*s %*s %s %s", szField[0], szField[1], szField[2]) != EOF)
-                    {
-                      if (atoi(szField[0]) > 0 && exclude.find(szField[2]) == exclude.end())
-                      {
-                        string strUsage = szField[1];
-                        strUsage.erase(strUsage.size() - 1, 1);
-                        if (bFirst)
-                        {
-                          bFirst = false;
-                        }
-                        else
-                        {
-                          ssDetails << ',';
-                        }
-                        ssDetails << szField[2] << '=' << strUsage;
-                      }
-                    }
-                  }
-                  if (pfinPipe)
-                  {
-                    pclose(pfinPipe);
-                  }
-                  else
-                  {
-                    cout<<"Error("<<errno<<"): "<<strerror(errno)<<endl;
-                  }
-                  exclude.clear();
-                  write(fdSocket, (ssDetails.str() + (string)"\n").c_str(), ssDetails.str().size() + 1);
                 }
-                // }}}
+              }
+              else
+              {
+                bExit = true;
+              }
+            }
+            if (fds[0].revents & POLLIN)
+            {
+              if (!gpUtility->sslWrite(ssl, strBuffer[1], nReturn))
+              {
+                bExit = true;
               }
             }
           }
+          else if (nReturn < 0)
+          {
+            bExit = true;
+          }
         }
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        close(fdSocket);
       }
-      close(fdSocket);
       sleep(300);
     }
+    if (ctx != NULL)
+    {
+      SSL_CTX_free(ctx);
+    }
+    gpUtility->sslDeinit();
   }
   // }}}
   // {{{ usage statement
