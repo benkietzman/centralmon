@@ -525,7 +525,7 @@ int main(int argc, char *argv[])
                       if (!(*j)->bClose && (((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED && gpCentral->utility()->sslRead((*j)->ssl, (*j)->strBuffer[0], nReturn)) || ((*j)->eSocketType == COMMON_SOCKET_UNENCRYPTED && gpCentral->utility()->fdRead((*j)->fdData, (*j)->strBuffer[0], nReturn))))
                       {
                         size_t nPosition;
-                        while ((nPosition = (*j)->strBuffer[0].find("\n", 0)) != string::npos)
+                        while ((nPosition = (*j)->strBuffer[0].find("\n")) != string::npos)
                         {
                           string strAction, strLine = (*j)->strBuffer[0].substr(0, nPosition);
                           (*j)->strBuffer[0].erase(0, nPosition + 1);
@@ -867,7 +867,6 @@ int main(int argc, char *argv[])
                               {
                                 delete ptMessage;
                               }
-                              (*j)->bClose = true;
                             }
                             // }}}
                             // {{{ messages
@@ -884,7 +883,7 @@ int main(int argc, char *argv[])
                                   {
                                     stringstream ssMessage;
                                     ssMessage << (*k)->strType << ";" << (*k)->strApplication << ";" << (*k)->strMessage;
-                                    (*j)->strBuffer[1] += ssMessage.str() + "\n";
+                                    (*j)->strBuffer[1].append(ssMessage.str() + "\n");
                                   }
                                   else
                                   {
@@ -898,7 +897,6 @@ int main(int argc, char *argv[])
                                 gMessageList.erase(*k);
                               }
                               removeSubList.clear();
-                              (*j)->bClose = true;
                             }
                             // }}}
                             // {{{ process
@@ -933,7 +931,6 @@ int main(int argc, char *argv[])
                               {
                                 (*j)->strBuffer[1] += ";;;;;;;;;\n";
                               }
-                              (*j)->bClose = true;
                             }
                             // }}}
                             // {{{ server
@@ -1029,7 +1026,6 @@ int main(int argc, char *argv[])
                               {
                                 (*j)->strBuffer[1] += ";;;;;;;;;;;;;\n";
                               }
-                              (*j)->bClose = true;
                             }
                             // }}}
                             // {{{ update
@@ -1037,7 +1033,6 @@ int main(int argc, char *argv[])
                             {
                               (*j)->strBuffer[1] += "okay\n";
                               bSync = true;
-                              (*j)->bClose = true;
                             }
                             // }}}
                           }
@@ -1062,29 +1057,8 @@ int main(int argc, char *argv[])
                         (*j)->bClose = true;
                       }
                     }
-                    if ((*j)->bClose && (*j)->strBuffer[1].empty())
+                    if ((*j)->bClose)
                     {
-                      if ((*j)->bClient)
-                      {
-                        ptOverall->partition.clear();
-                        for (map<string, process *>::iterator k = gOverallList[(*j)->strServer]->processList.begin(); k != gOverallList[(*j)->strServer]->processList.end(); k++)
-                        {
-                          k->second->owner.clear();
-                          delete k->second;
-                        }
-                        gOverallList[(*j)->strServer]->processList.clear();
-                        delete ptOverall;
-                        ptOverall = NULL;
-                        gOverallList.erase((*j)->strServer);
-                        //notify((string)"Lost client connection to " + (*j)->strServer, strError);
-                      }
-                      if ((*j)->eSocketType == COMMON_SOCKET_ENCRYPTED)
-                      {
-                        SSL_shutdown((*j)->ssl);
-                        SSL_free((*j)->ssl);
-                      }
-                      close((*j)->fdData);
-                      delete *j;
                       removeList.push_back(j);
                     }
                     else if ((*j)->bClient && gOverallList.find((*j)->strServer) != gOverallList.end())
@@ -1108,6 +1082,26 @@ int main(int argc, char *argv[])
               }
               for (list<list<connection *>::iterator>::iterator i = removeList.begin(); i != removeList.end(); i++)
               {
+                if ((*(*i))->bClient)
+                {
+                  gOverallList[(*(*i))->strServer]->partition.clear();
+                  for (map<string, process *>::iterator j = gOverallList[(*(*i))->strServer]->processList.begin(); j != gOverallList[(*(*i))->strServer]->processList.end(); j++)
+                  {
+                    j->second->owner.clear();
+                    delete j->second;
+                  }
+                  gOverallList[(*(*i))->strServer]->processList.clear();
+                  delete gOverallList[(*(*i))->strServer];
+                  gOverallList.erase((*(*i))->strServer);
+                  //notify((string)"Lost client connection to " + (*(*i))->strServer, strError);
+                }
+                if ((*(*i))->eSocketType == COMMON_SOCKET_ENCRYPTED)
+                {
+                  SSL_shutdown((*(*i))->ssl);
+                  SSL_free((*(*i))->ssl);
+                }
+                close((*(*i))->fdData);
+                delete *(*i);
                 bridge.erase(*i);
               }
               removeList.clear();
