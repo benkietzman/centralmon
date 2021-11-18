@@ -872,6 +872,7 @@ int main(int argc, char *argv[])
                             // {{{ messages
                             else if (strAction == "messages")
                             {
+                              bool bFound = false;
                               time_t CTime;
                               list<list<message *>::iterator> removeSubList;
                               time(&CTime);
@@ -882,6 +883,7 @@ int main(int argc, char *argv[])
                                   if ((*k)->CEndTime > CTime)
                                   {
                                     stringstream ssMessage;
+                                    bFound = true;
                                     ssMessage << (*k)->strType << ";" << (*k)->strApplication << ";" << (*k)->strMessage;
                                     (*j)->strBuffer[1].append(ssMessage.str() + "\n");
                                   }
@@ -897,6 +899,10 @@ int main(int argc, char *argv[])
                                 gMessageList.erase(*k);
                               }
                               removeSubList.clear();
+                              if (!bFound)
+                              {
+                                (*j)->bClose = true;
+                              }
                             }
                             // }}}
                             // {{{ process
