@@ -393,7 +393,7 @@ int main(int argc, char *argv[])
                         file.directoryList("/proc", procList);
                         for (list<string>::iterator i = procList.begin(); i != procList.end(); i++)
                         {
-                          if ((*i)[0] != '.' && file.directoryExist((string)"/proc/" + (*i)))
+                          if ((*i)[0] != '.' && manip.isNumeric(*i) && file.directoryExist((string)"/proc/" + (*i)))
                           {
                             // {{{ linux
                             #ifdef LINUX
