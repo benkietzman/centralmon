@@ -935,7 +935,28 @@ int main(int argc, char *argv[])
                               }
                               else
                               {
-                                (*j)->strBuffer[1] += ";;;;;;;;;\n";
+                                strError.clear();
+                                if (strServer.empty())
+                                {
+                                  strError = "Please provide the server.";
+                                }
+                                else if (gOverallList.find(strServer) == gOverallList.end())
+                                {
+                                  strError = "Please provide a valid server.";
+                                }
+                                else if (strProcess.empty())
+                                {
+                                  strError = "Please provide the process.";
+                                }
+                                else if (gOverallList[strServer]->processList.find(strProcess) == gOverallList[strServer]->processList.end())
+                                {
+                                  strError = "Please provide a valid process.";
+                                }
+                                else if (!gOverallList[strServer]->processList[strProcess]->bHaveValues)
+                                {
+                                  strError = "Process has no values.";
+                                }
+                                (*j)->strBuffer[1] += (string)";;;;;;;;;" + strError + (string)"\n";
                               }
                             }
                             // }}}
@@ -1002,35 +1023,68 @@ int main(int argc, char *argv[])
                             // {{{ system
                             else if (strAction == "system")
                             {
-                              bool bFound = false;
                               string strServer;
                               ssLine >> strServer;
-                              for (map<string, overall *>::iterator k = gOverallList.begin(); k != gOverallList.end(); k++)
+                              if (strServer.empty())
                               {
-                                if ((strServer.empty() || strServer == k->first) && k->second->bHaveValues)
+                                bool bFound = false;
+                                for (map<string, overall *>::iterator k = gOverallList.begin(); k != gOverallList.end(); k++)
                                 {
-                                  stringstream ssDetails;
-                                  bFound = true;
-                                  ssDetails << k->first << ';';
-                                  ssDetails << k->second->strOperatingSystem << ';';
-                                  ssDetails << k->second->strSystemRelease << ';';
-                                  ssDetails << k->second->nProcessors << ';';
-                                  ssDetails << k->second->unCpuSpeed << ';';
-                                  ssDetails << k->second->usProcesses << ';';
-                                  ssDetails << k->second->unCpuUsage << ';';
-                                  ssDetails << k->second->lUpTime << ';';
-                                  ssDetails << k->second->ulMainUsed << ';';
-                                  ssDetails << k->second->ulMainTotal << ';';
-                                  ssDetails << k->second->ulSwapUsed << ';';
-                                  ssDetails << k->second->ulSwapTotal << ';';
-                                  ssDetails << k->second->strPartitions << ';';
-                                  ssDetails << k->second->ssAlarms.str();
-                                  (*j)->strBuffer[1] += ssDetails.str() + "\n";
+                                  if (k->second->bHaveValues)
+                                  {
+                                    stringstream ssDetails;
+                                    bFound = true;
+                                    ssDetails << k->first << ';';
+                                    ssDetails << k->second->strOperatingSystem << ';';
+                                    ssDetails << k->second->strSystemRelease << ';';
+                                    ssDetails << k->second->nProcessors << ';';
+                                    ssDetails << k->second->unCpuSpeed << ';';
+                                    ssDetails << k->second->usProcesses << ';';
+                                    ssDetails << k->second->unCpuUsage << ';';
+                                    ssDetails << k->second->lUpTime << ';';
+                                    ssDetails << k->second->ulMainUsed << ';';
+                                    ssDetails << k->second->ulMainTotal << ';';
+                                    ssDetails << k->second->ulSwapUsed << ';';
+                                    ssDetails << k->second->ulSwapTotal << ';';
+                                    ssDetails << k->second->strPartitions << ';';
+                                    ssDetails << k->second->ssAlarms.str();
+                                    (*j)->strBuffer[1] += ssDetails.str() + "\n";
+                                  }
+                                }
+                                if (!bFound)
+                                {
+                                  (*j)->strBuffer[1] += ";;;;;;;;;;;;;No servers with values exist.\n";
                                 }
                               }
-                              if (!bFound)
+                              else if (gOverallList.find(strServer) != gOverallList.end())
                               {
-                                (*j)->strBuffer[1] += ";;;;;;;;;;;;;\n";
+                                if (gOverallList[strServer]->bHaveValues)
+                                {
+                                  stringstream ssDetails;
+                                  ssDetails << strServer << ';';
+                                  ssDetails << gOverallList[strServer]->strOperatingSystem << ';';
+                                  ssDetails << gOverallList[strServer]->strSystemRelease << ';';
+                                  ssDetails << gOverallList[strServer]->nProcessors << ';';
+                                  ssDetails << gOverallList[strServer]->unCpuSpeed << ';';
+                                  ssDetails << gOverallList[strServer]->usProcesses << ';';
+                                  ssDetails << gOverallList[strServer]->unCpuUsage << ';';
+                                  ssDetails << gOverallList[strServer]->lUpTime << ';';
+                                  ssDetails << gOverallList[strServer]->ulMainUsed << ';';
+                                  ssDetails << gOverallList[strServer]->ulMainTotal << ';';
+                                  ssDetails << gOverallList[strServer]->ulSwapUsed << ';';
+                                  ssDetails << gOverallList[strServer]->ulSwapTotal << ';';
+                                  ssDetails << gOverallList[strServer]->strPartitions << ';';
+                                  ssDetails << gOverallList[strServer]->ssAlarms.str();
+                                  (*j)->strBuffer[1] += ssDetails.str() + "\n";
+                                }
+                                else
+                                {
+                                  (*j)->strBuffer[1] += ";;;;;;;;;;;;;Server has no values.\n";
+                                }
+                              }
+                              else
+                              {
+                                (*j)->strBuffer[1] += ";;;;;;;;;;;;;Please provide a valid server.\n";
                               }
                             }
                             // }}}
