@@ -196,9 +196,9 @@ int main(int argc, char *argv[])
   gpUtility = new Utility(strError);
   // {{{ set signal handling
   sethandles(sighandle);
-  sigignore(SIGCHLD);
-  sigignore(SIGPIPE);
-  sigignore(SIGWINCH);
+  signal(SIGCHLD, SIG_IGN);
+  signal(SIGPIPE, SIG_IGN);
+  signal(SIGWINCH, SIG_IGN);
   // }}}
   // {{{ command line arguments
   for (int i = 1; i < argc; i++)
@@ -708,7 +708,7 @@ int main(int argc, char *argv[])
                               tOverall.ulSwapTotal = (sys.totalswap * sys.mem_unit) / 1048576;
                               tOverall.ulSwapUsed = ((sys.totalswap - sys.freeswap) * sys.mem_unit) / 1048576;
                             }
-                            fclose(pfinPipe);
+                            pclose(pfinPipe);
                           }
                           inCpuSpeed.close();
                         }
