@@ -998,13 +998,13 @@ int main(int argc, char *argv[])
                                     gOverallList[strServer]->bHaveValues = false;
                                     gOverallList[strServer]->bPage = false;
                                     bSync = true;
-                                    chat((string)"Accepted incoming server connection from " + strServer + (string)".", strError);
+                                    //chat((string)"Accepted incoming server connection from " + strServer + (string)".", strError);
                                   }
                                   else
                                   {
                                     (*j)->bClose = true;
-                                    chat((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
-                                    notify((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
+                                    //chat((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
+                                    //notify((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
                                   }
                                 }
                                 else
