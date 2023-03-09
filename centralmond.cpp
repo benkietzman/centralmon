@@ -48,7 +48,7 @@
 using namespace std;
 #include <Central>
 #include <Json>
-#include <ServiceJunction>
+#include <Radial>
 #include <SignalHandling>
 #include <Syslog>
 using namespace common;
@@ -161,14 +161,13 @@ static bool gbDaemon = false; //!< Global daemon variable.
 static bool gbShutdown = false; //!< Global shutdown variable.
 static int gfdStatus; //!< Global socket descriptor.
 static list<message *> gMessageList; //!< Contains the message list.
-static map<string, string> gCred; //!< Contains the Bridge credentials.
 static map<string, overall *> gOverallList; //!< Contains the overall list.
 static string gstrApplication = "Central Monitor"; //!< Global application name.
 static string gstrEmail; //!< Global notification email address.
 static string gstrRoom; //!< Global chat room.
 static string gstrTimezonePrefix = "c"; //!< Contains the local timezone.
 static Central *gpCentral = NULL; //!< Contains the Central class.
-static ServiceJunction *gpJunction = NULL; //!< Contains the Service Junction class.
+static Radial *gpRadial = NULL; //!< Contains the Radial class.
 static Syslog *gpSyslog = NULL; //!< Contains the Syslog class.
 // }}}
 // {{{ prototypes
@@ -221,7 +220,7 @@ int main(int argc, char *argv[])
   SSL_CTX *ctx = NULL;
 
   gpCentral = new Central(strError);
-  gpJunction = new ServiceJunction(strError);
+  gpRadial = new Radial(strError);
   // {{{ set signal handling
   sethandles(sighandle);
   signal(SIGBUS, SIG_IGN);
@@ -242,7 +241,6 @@ int main(int argc, char *argv[])
       gpCentral->acorn()->utility()->setConfPath(strCentral, strError);
       gpCentral->junction()->utility()->setConfPath(strCentral, strError);
       gpCentral->utility()->setConfPath(strCentral, strError);
-      gpJunction->utility()->setConfPath(strCentral, strError);
     }
     else if (strArg.size() > 14 && strArg.substr(0, 14) == "--certificate=")
     {
@@ -323,7 +321,6 @@ int main(int argc, char *argv[])
   // }}}
   gpCentral->setApplication(gstrApplication);
   gpCentral->setEmail(gstrEmail);
-  gpJunction->setApplication(gstrApplication);
   if (!gstrRoom.empty())
   {
     if (gstrRoom[0] != '#')
@@ -341,20 +338,20 @@ int main(int argc, char *argv[])
       while (gpCentral->utility()->getLine(inCred, strLine))
       {
         Json *ptJson = new Json(strLine);
-        if (ptJson->m.find("bridge") != ptJson->m.end())
+        if (ptJson->m.find("radial") != ptJson->m.end() && ptJson->m["radial"]->m.find("User") != ptJson->m["radial"]->m.end() && !ptJson->m["radial"]->m["User"]->v.empty() && ptJson->m["radial"]->m.find("Password") != ptJson->m["radial"]->m.end() && !ptJson->m["radial"]->m["Password"]->v.empty())
         {
-          ptJson->m["bridge"]->flatten(gCred, true, false);
-          if (ptJson->m.find("central") != ptJson->m.end())
+          gpRadial->setCredentials(ptJson->m["radial"]->m["User"]->v, ptJson->m["radial"]->m["Password"]->v);
+        }
+        if (ptJson->m.find("central") != ptJson->m.end())
+        {
+          map<string, string> cred;
+          ptJson->m["central"]->flatten(cred, true, false);
+          cred["Type"] = "mysql";
+          if (gpCentral->addDatabase("central", cred, strError))
           {
-            map<string, string> cred;
-            ptJson->m["central"]->flatten(cred, true, false);
-            cred["Type"] = "mysql";
-            if (gpCentral->addDatabase("central", cred, strError))
-            {
-              bSetCredentials = true;
-            }
-            cred.clear();
+            bSetCredentials = true;
           }
+          cred.clear();
         }
         delete ptJson;
       }
@@ -1314,13 +1311,12 @@ int main(int argc, char *argv[])
     SSL_CTX_free(ctx);
   }
   gpCentral->utility()->sslDeinit();
-  gCred.clear();
   if (gpSyslog != NULL)
   {
     delete gpSyslog;
   }
   delete gpCentral;
-  delete gpJunction;
+  delete gpRadial;
 
   return 0;
 }
@@ -1375,14 +1371,8 @@ bool authorizedClient(const string strServer, const string strClient)
 bool chat(const string strMessage, string &strError)
 {
   bool bResult = false;
-  Json *ptRequest = new Json, *ptResponse = new Json;
 
-  ptRequest->insert("Section", "chat");
-  ptRequest->insert("Function", "application");
-  ptRequest->m["Request"] = new Json;
-  ptRequest->m["Request"]->insert("Message", strMessage);
-  ptRequest->m["Request"]->insert("Target", gstrRoom);
-  if (gpJunction->bridge(gCred["User"], gCred["Password"], ptRequest, ptResponse, strError))
+  if (gpRadial->ircChat(gstrRoom, strMessage, strError))
   {
     bResult = true;
   }
@@ -1390,8 +1380,6 @@ bool chat(const string strMessage, string &strError)
   {
     notify((string)"Failed to chat the following message:  " + strMessage + (string)" --- " + strError, strError);
   }
-  delete ptRequest;
-  delete ptResponse;
 
   return bResult;
 }
