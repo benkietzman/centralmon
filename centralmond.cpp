@@ -64,7 +64,7 @@ using namespace common;
 /*! \def mUSAGE(A)
 * \brief Prints the usage statement.
 */
-#define mUSAGE(A) cout << endl << "Usage:  "<< A << " [options]"  << endl << endl << " --central=CENTRAL" << endl << "     Provides the path to the central file." << endl << endl << " --certificate=CERTIFICATE" << endl << "     Provides the path to the certificate file." << endl << endl << " -c CREDENTIALS, --cred=CREDENTIALS" << endl << "     Provides the path to the credentials file." << endl << endl << " -d, --daemon" << endl << "     Turns the process into a daemon." << endl << endl << " -e EMAIL, --email=EMAIL" << endl << "     Provides the email address for default notifications." << endl << endl << " -h, --help" << endl << "     Displays this usage screen." << endl << endl << " --private-key=PRIVATE_KEY" << endl << "     Provides the path to the private key file." << endl << endl << " -r ROOM, --room=ROOM" << endl << "     Provides the chat room." << endl << endl << "     --syslog" << endl << "     Enables syslog." << endl << endl << " -v, --version" << endl << "     Displays the current version of this software." << endl << endl
+#define mUSAGE(A) cout << endl << "Usage:  "<< A << " [options]"  << endl << endl << " --central=CENTRAL" << endl << "     Provides the path to the central file." << endl << endl << " --certificate=CERTIFICATE" << endl << "     Provides the path to the certificate file." << endl << endl << " -c CREDENTIALS, --cred=CREDENTIALS" << endl << "     Provides the path to the credentials file." << endl << endl << " -d, --daemon" << endl << "     Turns the process into a daemon." << endl << endl << " -e EMAIL, --email=EMAIL" << endl << "     Provides the email address for default notifications." << endl << endl << " -h, --help" << endl << "     Displays this usage screen." << endl << endl << " --private-key=PRIVATE_KEY" << endl << "     Provides the path to the private key file." << endl << endl << " -r ROOM, --room=ROOM" << endl << "     Provides the chat room." << endl << endl << " -v, --version" << endl << "     Displays the current version of this software." << endl << endl
 /*! \def mVER_USAGE(A,B)
 * \brief Prints the version number.
 */
@@ -168,7 +168,6 @@ static string gstrRoom; //!< Global chat room.
 static string gstrTimezonePrefix = "c"; //!< Contains the local timezone.
 static Central *gpCentral = NULL; //!< Contains the Central class.
 static Radial *gpRadial = NULL; //!< Contains the Radial class.
-static Syslog *gpSyslog = NULL; //!< Contains the Syslog class.
 // }}}
 // {{{ prototypes
 /*! \fn bool authorizedClient(const string strServer, const string strClient)
@@ -301,10 +300,6 @@ int main(int argc, char *argv[])
       }
       gpCentral->manip()->purgeChar(gstrRoom, gstrRoom, "'");
       gpCentral->manip()->purgeChar(gstrRoom, gstrRoom, "\"");
-    }
-    else if (strArg == "--syslog")
-    {
-      gpSyslog = new Syslog(gstrApplication, "centralmond");
     }
     else if (strArg == "-v" || strArg == "--version")
     {
@@ -473,10 +468,6 @@ int main(int argc, char *argv[])
                 if ((fdData = accept(gfdStatus, (struct sockaddr *)&cli_addr, &clilen)) >= 0)
                 {
                   connection *ptConnection = new connection;
-                  if (gpSyslog != NULL)
-                  {
-                    gpSyslog->connectionStarted("Accepted an incoming request.", fdData);
-                  }
                   ptConnection->bClient = false;
                   ptConnection->bClose = false;
                   ptConnection->fdData = fdData;
@@ -1154,7 +1145,8 @@ int main(int argc, char *argv[])
                 }
                 if ((*(*i))->eSocketType == COMMON_SOCKET_ENCRYPTED)
                 {
-                  SSL_shutdown((*(*i))->ssl);
+                  // Disabled SSL_shutdown() due it appearing to hang on an underlying read().
+                  //SSL_shutdown((*(*i))->ssl);
                   SSL_free((*(*i))->ssl);
                 }
                 close((*(*i))->fdData);
@@ -1311,10 +1303,6 @@ int main(int argc, char *argv[])
     SSL_CTX_free(ctx);
   }
   gpCentral->utility()->sslDeinit();
-  if (gpSyslog != NULL)
-  {
-    delete gpSyslog;
-  }
   delete gpCentral;
   delete gpRadial;
 
