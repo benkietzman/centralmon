@@ -170,12 +170,6 @@ static Central *gpCentral = NULL; //!< Contains the Central class.
 static Radial *gpRadial = NULL; //!< Contains the Radial class.
 // }}}
 // {{{ prototypes
-/*! \fn bool authorizedClient(const string strServer, const string strClient)
-* \brief Checks for authorized client connection.
-* \param strServer Contains the client server name.
-* \param strClient Contains the client IP address.
-*/
-bool authorizedClient(const string strServer, const string strClient);
 /*! \fn bool chat(const string strMessage, string &strError)
 * \brief Sends a chat message to the Bridge.
 * \param strMessage Contains the message.
@@ -955,7 +949,6 @@ int main(int argc, char *argv[])
                               ssLine >> strServer;
                               if (!strServer.empty())
                               {
-                                bool bIPv6 = false;
                                 char szIP[INET6_ADDRSTRLEN];
                                 sockaddr_storage addr;
                                 socklen_t len = sizeof(addr);
@@ -969,37 +962,23 @@ int main(int argc, char *argv[])
                                 else if (addr.ss_family == AF_INET6)
                                 {
                                   sockaddr_in6 *s = (sockaddr_in6 *)&addr;
-                                  bIPv6 = true;
                                   inet_ntop(AF_INET6, &s->sin6_addr, szIP, sizeof(szIP));
                                 }
                                 strClient = szIP;
-                                // 20120824 - Ben Kietzman:  Authorization does not work right with IPv6 due to the client outgoing IP being different from the incoming IP.
-                                if (bIPv6 || authorizedClient(strServer, strClient))
+                                if (gOverallList.find(strServer) == gOverallList.end())
                                 {
-                                  if (gOverallList.find(strServer) == gOverallList.end())
-                                  {
-                                    (*j)->bClient = true;
-                                    (*j)->strServer = strServer;
-                                    (*j)->CStartTime = 0;
-                                    gOverallList[strServer] = new overall;
-                                    gOverallList[strServer]->bHaveThresholds = false;
-                                    gOverallList[strServer]->bHaveValues = false;
-                                    gOverallList[strServer]->bPage = false;
-                                    bSync = true;
-                                    //chat((string)"Accepted incoming server connection from " + strServer + (string)".", strError);
-                                  }
-                                  else
-                                  {
-                                    (*j)->bClose = true;
-                                    //chat((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
-                                    //notify((string)"A secondary client request arrived for " + strServer + (string)".  Request has been denied.", strError);
-                                  }
+                                  (*j)->bClient = true;
+                                  (*j)->strServer = strServer;
+                                  (*j)->CStartTime = 0;
+                                  gOverallList[strServer] = new overall;
+                                  gOverallList[strServer]->bHaveThresholds = false;
+                                  gOverallList[strServer]->bHaveValues = false;
+                                  gOverallList[strServer]->bPage = false;
+                                  bSync = true;
                                 }
                                 else
                                 {
                                   (*j)->bClose = true;
-                                  chat((string)"A client request arrived for " + strServer + (string)" which does not match the " + strClient + (string)" IP address.  Request has been denied.", strError);
-                                  notify((string)"A client request arrived for " + strServer + (string)" which does not match the " + strClient + (string)" IP address.  Request has been denied.", strError);
                                 }
                               }
                               else
@@ -1307,52 +1286,6 @@ int main(int argc, char *argv[])
   delete gpRadial;
 
   return 0;
-}
-// }}}
-// {{{ authorizedClient()
-bool authorizedClient(const string strServer, const string strClient)
-{
-  bool bResult = false;
-  struct addrinfo hints;
-  struct addrinfo *result;
-  int nReturn;
-
-  memset(&hints, 0, sizeof(struct addrinfo));
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = 0;
-  hints.ai_protocol = 0;
-  if ((nReturn = getaddrinfo(strServer.c_str(), NULL, &hints, &result)) == 0)
-  {
-    struct addrinfo *rp;
-    string strIP;
-    for (rp = result; !bResult && rp != NULL; rp = rp->ai_next)
-    {
-      char szIP[INET6_ADDRSTRLEN];
-      if (rp->ai_family == AF_INET)
-      {
-        sockaddr_in *s = (sockaddr_in *)rp->ai_addr;
-        inet_ntop(AF_INET, &s->sin_addr, szIP, sizeof(szIP));
-      }
-      else if (rp->ai_family == AF_INET6)
-      {
-        sockaddr_in6 *s = (sockaddr_in6 *)rp->ai_addr;
-        inet_ntop(AF_INET6, &s->sin6_addr, szIP, sizeof(szIP));
-      }
-      strIP = szIP;
-      if (strIP.find(".", 0) != string::npos && (strIP.size() < 7 || strIP.substr(0, 7) != "::ffff:"))
-      {
-        strIP = (string)"::ffff:" + strIP;
-      }
-      if (strClient == strIP)
-      {
-        bResult = true;
-      }
-    }
-    freeaddrinfo(result);
-  }
-
-  return bResult;
 }
 // }}}
 // {{{ chat()
