@@ -344,7 +344,9 @@ int main(int argc, char *argv[])
         bool bExit = false;
         size_t unPosition;
         string strBuffer[2];
+        time_t CTimeout[2];
         strBuffer[1] = (string)"server " + strServer + "\n";
+        time(&(CTimeout[0]));
         while (!bExit)
         {
           pollfd fds[1];
@@ -354,7 +356,7 @@ int main(int argc, char *argv[])
           {
             fds[0].events |= POLLOUT;
           }
-          if ((nReturn = poll(fds, 1, 250)) > 0)
+          if ((nReturn = poll(fds, 1, 2000)) > 0)
           {
             if (fds[0].revents & POLLIN)
             {
@@ -641,6 +643,7 @@ int main(int argc, char *argv[])
                       map<string, bool> exclude;
                       stringstream ssDetails;
                       overall tOverall;
+                      time(&(CTimeout[0]));
                       // {{{ gather system data
                       if (uname(&server) != -1)
                       {
@@ -875,6 +878,11 @@ int main(int argc, char *argv[])
             }
           }
           else if (nReturn < 0)
+          {
+            bExit = true;
+          }
+          time(&(CTimeout[1]));
+          if ((CTimeout[1] - CTimeout[2]) > 60)
           {
             bExit = true;
           }
