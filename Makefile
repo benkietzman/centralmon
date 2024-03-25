@@ -31,15 +31,15 @@ bin/centralmon_trigger: ../common/libcommon.a obj/centralmon_trigger.o
 
 obj/centralmon.o: centralmon.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
-	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmon.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++14 -Wall -ggdb -c centralmon.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
+	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmon.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++11 -Wall -ggdb -c centralmon.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
 obj/centralmond.o: centralmond.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
-	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmond.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++14 -Wall -ggdb -c centralmond.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
+	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmond.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++11 -Wall -ggdb -c centralmond.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
 obj/centralmon_trigger.o: centralmon_trigger.cpp ../common/Makefile
 	-if [ ! -d obj ]; then mkdir obj; fi;
-	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmon_trigger.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++14 -Wall -ggdb -c centralmon_trigger.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
+	if test "$(MAKE_UNAME)" = "Linux"; then g++ -std=c++14 -Wall -ggdb -c centralmon_trigger.cpp -o $@ -DLINUX $(CPPFLAGS) -I/data/extras/include -I../common; elif test "$(MAKE_UNAME)" = "SunOS"; then g++ -std=c++11 -Wall -ggdb -c centralmon_trigger.cpp -o $@ -DSOLARIS $(CPPFLAGS) -I/data/extras/include -I/usr/local/ssl/include -I../common; fi;
 
 install: bin/centralmon bin/centralmon_trigger
 	install --mode=755 bin/centralmon ${prefix}/sbin/
