@@ -346,7 +346,7 @@ int main(int argc, char *argv[])
   {
     ifstream inFile;
     socklen_t clilen;
-    sockaddr_in cli_addr;
+    sockaddr_in6 cli_addr;
     struct addrinfo hints;
     struct addrinfo *result;
     int nReturn;
@@ -448,7 +448,7 @@ int main(int argc, char *argv[])
               if (fds[0].revents & POLLIN)
               {
                 int fdData;
-                if ((fdData = accept(gfdStatus, (struct sockaddr *)&cli_addr, &clilen)) >= 0)
+                if ((fdData = accept(gfdStatus, (sockaddr *)&cli_addr, &clilen)) >= 0)
                 {
                   connection *ptConnection = new connection;
                   ptConnection->bClient = false;
